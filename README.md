@@ -1,124 +1,117 @@
-# Eye Closure Detection (MediaPipe Face Mesh)
+# Eye Closure Detector
 
-This repository provides a complete, production-oriented Python module for real-time eye-closure detection using **MediaPipe Face Mesh** (468 landmarks) and **Eye Aspect Ratio (EAR)**.
+> Real-time eye-closure detection with **MediaPipe Face Landmarker** and **Eye Aspect Ratio (EAR)**. It tells normal blinks apart from prolonged eye closure and adapts its threshold to each user through calibration.
 
-## How It Works
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
+![MediaPipe](https://img.shields.io/badge/MediaPipe-0.10.14+-0097A7?style=flat-square)
+![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=flat-square&logo=opencv&logoColor=white)
 
-1. **Face Landmarker (MediaPipe Tasks)** detects 468 facial landmarks per face.
-2. For each eye, the system extracts **6 key landmarks** (12 total points).
-3. It computes **EAR** per eye:
+6th-semester mini project.
 
-   `EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||)`
+## ✨ Features
 
-4. It fuses both eyes (average EAR) and applies **state tracking** to distinguish:
-   - **Blink** (typical duration ~100–400ms)
-   - **Prolonged closure** (longer than blink threshold)
+- Per-frame eye states: `OPEN`, `BLINK`, `CLOSED`, `NO_FACE`
+- **EAR** per eye from 6 landmarks each, averaged across both eyes
+- **Blink vs. prolonged closure** decided by duration-based state tracking
+- **Adaptive calibration:** measures your open-eye EAR (mean/std) and sets `threshold = clamp(mean − k·std, min, max)`, then keeps adapting it during the session from an exponential moving average of open-eye EAR
+- **Multi-face handling:** when several faces are detected, follows the closest one (largest inter-ocular distance)
+- Handles lost faces gracefully: emits `NO_FACE` and never latches a false closure
+- Works with webcams or video files. Headless mode and CSV export are available
+- Low-light option (`--equalize`) and a downscale option (`--process-scale`) for higher FPS
+- Benchmark tool, an annotation-based accuracy evaluator (accuracy / precision / recall / F1), and unit tests for the EAR math
 
-## Landmark Indices
+## 🧠 How it works
 
-The module uses widely adopted Face Mesh landmark indices (per MediaPipe topology):
+```
+EAR = (‖p2 − p6‖ + ‖p3 − p5‖) / (2 · ‖p1 − p4‖)
+```
 
-- **Left eye (6 points)**: `[33, 160, 158, 133, 153, 144]`
-- **Right eye (6 points)**: `[362, 385, 387, 263, 373, 380]`
+| Eye | Face Mesh landmark indices |
+| --- | --- |
+| Left | `[33, 160, 158, 133, 153, 144]` |
+| Right | `[362, 385, 387, 263, 373, 380]` |
 
-Point ordering matches the EAR formula where `p1` and `p4` are the horizontal corners, and `(p2,p6)` and `(p3,p5)` form the two vertical pairs.
+`p1`/`p4` are the horizontal eye corners; `(p2, p6)` and `(p3, p5)` are the vertical pairs. See `docs/algorithm.md` for details.
 
-## Install
+## 🛠️ Tech Stack
+
+Python · MediaPipe Tasks (Face Landmarker) · OpenCV · NumPy · `unittest`
+
+## 🚀 Getting Started
 
 ```bash
 python -m venv .venv
+# Windows
 .venv\Scripts\activate
-pip install -r requirements.txt
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt   # mediapipe>=0.10.14, opencv-python>=4.9, numpy>=1.26
 ```
 
-## Run (Webcam)
+### Run on a webcam
 
 ```bash
 python -m eye_closure_detector.app --source 0 --calibrate-seconds 3
 ```
 
-On first run, the app downloads the face landmarker model to `models/face_landmarker.task`.
+The face landmarker model ships in `models/face_landmarker.task`. If it's missing, the app downloads it on first run.
 
-Smoke-test for a few seconds (no UI):
+### Useful options
 
-```bash
-python -m eye_closure_detector.app --source 0 --no-display --calibrate-seconds 0 --max-seconds 5
-```
+| Flag | Purpose |
+| --- | --- |
+| `--source` | Webcam index (e.g. `0`) or a video path |
+| `--calibrate-seconds` | Open-eye calibration time (default 3) |
+| `--no-display` | Run headless |
+| `--csv out.csv` | Write per-frame predictions |
+| `--process-scale 0.5` | Downscale frames for speed |
+| `--max-num-faces` | Max faces to track (default 3) |
+| `--equalize` | Histogram-equalise luma for low light |
+| `--width` / `--height` | Capture resolution |
+| `--min-det-conf` / `--min-track-conf` | Detection/tracking confidence (default 0.6) |
+| `--max-seconds` | Stop after N seconds (smoke tests) |
 
-If FPS is low, try:
-
-```bash
-python -m eye_closure_detector.app --source 0 --process-scale 0.5 --max-num-faces 1
-```
-
-Low-light option:
-
-```bash
-python -m eye_closure_detector.app --source 0 --equalize
-```
-
-## Run (Video File)
+### Video file → CSV
 
 ```bash
-python -m eye_closure_detector.app --source path\\to\\video.mp4 --no-display --csv out.csv
+python -m eye_closure_detector.app --source path/to/video.mp4 --no-display --csv out.csv
 ```
 
-## Calibration and Adaptive Threshold
-
-Calibration measures your **open-eye** EAR for a few seconds and computes:
-
-- `baseline_ear_mean`
-- `baseline_ear_std`
-- `closure_threshold = clamp(baseline_mean - k * baseline_std, min, max)`
-
-This adapts to individual eye geometry and reduces false detections.
-
-## Tests
-
-Unit tests (EAR math):
+### Tests, benchmark and evaluation
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -q
-```
-
-Optional integration test (requires a video path):
-
-```bash
-set EYE_VIDEO_PATH=C:\\path\\to\\video.mp4
-python -m unittest discover -s tests -p "test_*.py" -q
-```
-
-## Accuracy Validation
-
-For accuracy validation against manual annotations:
-
-1. Run predictions to CSV (`--csv`).
-2. Create an annotation CSV (see `docs/annotation_format.md`).
-3. Evaluate:
-
-```bash
+# optional integration/performance tests: set EYE_VIDEO_PATH=path/to/video.mp4 first
+python -m eye_closure_detector.benchmark --source 0 --seconds 10
 python tools/evaluate_annotations.py --pred out.csv --ann docs/sample_annotations.csv
 ```
 
-## Performance
+The performance target is **≥30 FPS** on typical 720p webcam input (hardware-dependent). Measured numbers are not recorded yet; see `docs/performance.md` for how to benchmark.
 
-Benchmark on a file/webcam:
+## 📁 Project Structure
 
-```bash
-python -m eye_closure_detector.benchmark --source 0 --seconds 10
+```
+eye_closure_detector/
+  app.py                 # CLI entry point (webcam/video, overlay, CSV)
+  detector.py            # EyeClosureDetector state machine
+  ear.py                 # EAR computation
+  calibration.py         # adaptive threshold calibration
+  landmarks.py           # eye landmark indices
+  mediapipe_facemesh.py  # MediaPipe Tasks wrapper
+  model_assets.py        # model download/locate
+  benchmark.py           # FPS benchmark
+models/face_landmarker.task
+tools/                   # evaluation + inspection + smoke-run scripts
+tests/test_ear_unittest.py
+docs/                    # algorithm, annotation format, performance, sample annotations
 ```
 
-The target is **≥30 FPS** on typical 720p webcam input; performance depends on CPU/GPU and resolution.
+## 🗺️ Possible extensions
 
-## More Documentation
+- Drowsiness alerting built on top of `CLOSED` duration
+- Federated / on-device training
 
-- `docs/algorithm.md`
-- `docs/performance.md`
-- `docs/annotation_format.md`
+## 📄 License
 
-## Notes on Robustness
-
-- If detection is temporarily lost, the module emits `NO_FACE` and avoids latching false closures.
-- If multiple faces are present, it automatically chooses the face with the **largest inter-ocular distance** (closest face).
-- If landmarks are unstable under extreme lighting/occlusion, the detector increases smoothing and requires more evidence before declaring prolonged closure.
-
+No licence file has been added yet, so all rights are reserved by default.
